@@ -1,0 +1,108 @@
+---
+title: "Practical Machine Learning"
+author: "David L Denton"
+date: "March 10, 2016"
+output: html_document
+---
+
+### Synopsis
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit, it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. The goal of this project is to classify the quality of a subject's barbell lift based on data collected by accelerometers on the belt, forearm, arm, and dumbell. 
+
+### Load required libraries
+```{r message=FALSE}
+library(gridExtra)
+library(caret)
+```
+
+### Data Collection and Processing
+The data used in this project is publically available from the following website: http://groupware.les.inf.puc-rio.br/har. For this analysis, the data has already been divided into a large training set, and a test set of 20 cases. Some initial cleaning is performed to standardize the two sets and reduce the number of features. 
+
+Download the data.
+```{r cache = TRUE}
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+                     stringsAsFactors = FALSE, na.strings = c("NA", "", "#DIV/0!"))
+
+testing <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+                     stringsAsFactors = FALSE, na.strings = c("NA", "", "#DIV/0!"))
+```
+
+Set the variable classes of the testing set equal to the training set.
+```{r}
+testing[0,] <- training[0,]
+```
+
+Remove variables that are not useful for prediction (id numbers, subject names, timestamps), and variables that contain NA values.
+```{r}
+training <- training[,8:160]
+training <- training[, colSums(is.na(training)) == 0]
+```
+Subset the testing set similarly to the training set.
+```{r}
+testing <- testing[c(colnames(training[,1:52]),"problem_id")]
+```
+In order to estimate the out-of-sample error, the training set is further subdivided into sub-training and sub-test sets.
+```{r cache = TRUE}
+set.seed(323)
+intrain <- createDataPartition(y = training$classe, p = 0.65, list = FALSE)
+subtrain <- training[intrain,]
+subtest <- training[-intrain,]
+```
+
+### Model Training
+Four different models are trained using the following algorithms: classification tree, bagged classification tree, k nearest neightbors, and random forest. K-folds cross validation is used to select optimal tuning parameters.
+```{r cache = TRUE, message = FALSE}
+#Create control for train (10-fold cross validation)
+control <- trainControl(method = "cv", number = 10, repeats = 3, verboseIter = FALSE)
+
+#classification tree
+fit_tree <- train(classe ~ ., method = "rpart", data = subtrain, trControl = control)
+
+#Bagged classification tree
+fit_bag <- train(classe ~ ., method = "treebag", data = subtrain, trControl = control)
+
+#K nearest neighbors
+fit_knn <- train(classe ~ ., method = "knn", data = subtrain, trControl = control)
+
+#Random forest
+fit_rf <- train(classe ~ ., method = "rf", data = subtrain, trControl = control)
+```
+
+### Model Selection
+Each model is used to predict the classe variable on the subtest set. These predictions are compared to the actual values in order to determine the accuracy of the models. Confusion matrices provide additional measures of model fit (i.e. kappa). 
+```{r message = FALSE, results = "hide", cache = TRUE}
+#Classification Tree
+predict_tree <- predict(fit_tree, newdata = subtest)
+cm_tree <- confusionMatrix(predict_tree, subtest$classe)
+
+#Bagged Classification Tree
+predict_bag <- predict(fit_bag, newdata = subtest)
+cm_bag <- confusionMatrix(predict_bag, subtest$classe)
+
+#K nearest neighbors
+predict_knn <- predict(fit_knn, newdata = subtest)
+cm_knn <- confusionMatrix(predict_knn, subtest$classe)
+
+#Random forest
+predict_rf <- predict(fit_rf, newdata = subtest)
+cm_rf <- confusionMatrix(predict_rf, subtest$classe)
+```
+The accuracy and kappa statistics for each model are compared (numercically and visually).
+```{r echo = FALSE, fig.align = "center"}
+data.frame(model = c("Classification Tree", "Bagged Tree", "K Nearest Neighbors", "Random Forest"), accuracy = c(cm_tree$overall[[1]], cm_bag$overall[[1]], cm_knn$overall[[1]], cm_rf$overall[[1]]), kappa = c(cm_tree$overall[[2]], cm_bag$overall[[2]], cm_knn$overall[[2]], cm_rf$overall[[2]]))
+
+g1 <- ggplot(subtest, aes(x = predict_tree, y = classe)) + geom_jitter(alpha = 0.3, col = "blue") + labs(title = "Classification Tree", x = "prediction", y = "classe")
+g2 <- ggplot(subtest, aes(x = predict_bag, y = classe)) + geom_jitter(alpha = 0.3, col = "blue") + labs(title = "Bagged Tree", x = "prediction", y = "classe")
+g3 <- ggplot(subtest, aes(x = predict_knn, y = classe)) + geom_jitter(alpha = 0.3, col = "blue") + labs(title = "K Nearest Neighbors", x = "prediction", y = "classe")
+g4 <- ggplot(subtest, aes(x = predict_rf, y = classe)) + geom_jitter(alpha = 0.3, col = "blue") + labs(title = "Random Forest", x = "prediction", y = "classe")
+grid.arrange(g1, g2, g3, g4, ncol = 2)
+```
+
+The random forest has the highest accuracy and kappa values of the four tested models. The out-of-sample error rate is estimated at 0.8%.
+
+### Predictions on Testing set
+The random forest model can now be retrained on the entire training data set and then used to predict the classe variable on the testing set.
+
+```{r cache = TRUE, message = FALSE}
+fit_rf <- train(classe ~ ., method = "rf", data = training, trControl = control)
+predict(fit_rf, newdata = testing)
+```
